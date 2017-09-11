@@ -15,7 +15,7 @@ type Master struct {
 	sync.Mutex
 
 	address     string
-	doneChannel chan bool
+	doneChannel chan bool //是否结束工作
 
 	// protected by the mutex
 	newCond *sync.Cond // signals when Register() adds to workers[]
@@ -28,7 +28,7 @@ type Master struct {
 
 	shutdown chan struct{}
 	l        net.Listener
-	stats    []int
+	stats    []int //纪录worker完成的任务
 }
 
 // Register is an RPC method that is called by workers after they have started
@@ -139,9 +139,9 @@ func (mr *Master) run(jobName string, files []string, nreduce int,
 
 	fmt.Printf("%s: Starting Map/Reduce task %s\n", mr.address, mr.jobName)
 
-	schedule(mapPhase)
-	schedule(reducePhase)
-	finish()
+	schedule(mapPhase)    //分发map任务
+	schedule(reducePhase) //分发reduce任务
+	finish()              //纪录每个worker完成的任务数量
 	mr.merge()
 
 	fmt.Printf("%s: Map/Reduce task completed\n", mr.address)

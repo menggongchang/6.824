@@ -88,7 +88,8 @@ func check(t *testing.T, files []string) {
 // Workers report back how many RPCs they have processed in the Shutdown reply.
 // Check that they processed at least 1 DoTask RPC.
 func checkWorker(t *testing.T, l []int) {
-	for _, tasks := range l {
+	for i, tasks := range l {
+		fmt.Println("Worker ", i, " did ", tasks, " tasks. ")
 		if tasks == 0 {
 			t.Fatalf("A worker didn't do any work\n")
 		}
@@ -138,6 +139,7 @@ func setup() *Master {
 
 func cleanup(mr *Master) {
 	mr.CleanupFiles()
+	//删除输入文件
 	for _, f := range mr.files {
 		removeFile(f)
 	}
@@ -175,9 +177,9 @@ func TestOneFailure(t *testing.T) {
 	mr := setup()
 	// Start 2 workers that fail after 10 tasks
 	go RunWorker(mr.address, port("worker"+strconv.Itoa(0)),
-		MapFunc, ReduceFunc, 10)
+		MapFunc, ReduceFunc, 10) //此线程10个任务后down
 	go RunWorker(mr.address, port("worker"+strconv.Itoa(1)),
-		MapFunc, ReduceFunc, -1)
+		MapFunc, ReduceFunc, -1) //此线程正常运行
 	mr.Wait()
 	check(t, mr.files)
 	checkWorker(t, mr.stats)

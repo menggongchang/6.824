@@ -60,11 +60,13 @@ func removeFile(n string) {
 
 // CleanupFiles removes all intermediate files produced by running mapreduce.
 func (mr *Master) CleanupFiles() {
+	//删除中间文件
 	for i := range mr.files {
 		for j := 0; j < mr.nReduce; j++ {
 			removeFile(reduceName(mr.jobName, i, j))
 		}
 	}
+	//删除reduce结果文件
 	for i := 0; i < mr.nReduce; i++ {
 		removeFile(mergeName(mr.jobName, i))
 	}

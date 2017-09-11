@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"mapreduce"
 	"os"
+	"strconv"
+	"strings"
+	"unicode"
 )
 
 //
@@ -15,6 +18,18 @@ import (
 //
 func mapF(filename string, contents string) []mapreduce.KeyValue {
 	// TODO: you have to write this function
+	result := make([]mapreduce.KeyValue, 0)
+	var temp mapreduce.KeyValue
+
+	f := func(c rune) bool {
+		return !unicode.IsLetter(c) && !unicode.IsNumber(c)
+	}
+	for _, key := range strings.FieldsFunc(contents, f) {
+		temp.Key = key
+		temp.Value = "1"
+		result = append(result, temp)
+	}
+	return result
 }
 
 //
@@ -24,6 +39,7 @@ func mapF(filename string, contents string) []mapreduce.KeyValue {
 //
 func reduceF(key string, values []string) string {
 	// TODO: you also have to write this function
+	return strconv.Itoa(len(values))
 }
 
 // Can be run in 3 ways:
@@ -31,6 +47,7 @@ func reduceF(key string, values []string) string {
 // 2) Master (e.g., go run wc.go master localhost:7777 x1.txt .. xN.txt)
 // 3) Worker (e.g., go run wc.go worker localhost:7777 localhost:7778 &)
 func main() {
+
 	if len(os.Args) < 4 {
 		fmt.Printf("%s: see usage comments in file\n", os.Args[0])
 	} else if os.Args[1] == "master" {

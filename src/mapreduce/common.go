@@ -1,7 +1,7 @@
 package mapreduce
 
 import (
-	"fmt"
+	// "fmt"
 	"strconv"
 )
 
@@ -11,7 +11,8 @@ const debugEnabled = false
 // debug() will only print if debugEnabled is true
 func debug(format string, a ...interface{}) (n int, err error) {
 	if debugEnabled {
-		n, err = fmt.Printf(format, a...)
+		MyLog.Printf(format, a...)
+		// n, err = fmt.Printf(format, a...)将日志输出到自己的日志文件
 	}
 	return
 }
