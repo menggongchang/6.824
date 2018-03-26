@@ -19,11 +19,14 @@ package raft
 
 import "sync"
 import "labrpc"
+import (
+	"math/rand"
+	"strconv"
+	"time"
+)
 
 // import "bytes"
 // import "encoding/gob"
-
-
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -40,26 +43,44 @@ type ApplyMsg struct {
 //
 // A Go object implementing a single Raft peer.
 //
+type Log struct {
+	Term    int //命令接受时的任期号
+	Command interface{}
+}
+
+//raft节点
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 
-	// Your data here (2A, 2B, 2C).
-	// Look at the paper's Figure 2 for a description of what
-	// state a Raft server must maintain.
-
+	//持久保存
+	currentTerm int
+	votedFor    int   //-1：本轮未投票
+	logs        []Log //log entries
+	//易变的状态,all servers
+	commitIndex int
+	lastApplied int //应用到状态机
+	//易变的状态,only leaders
+	nextIndex  []int
+	matchIndex []int
+	//自己添加的变量
+	state        int       //表示server的状态，1follower，2candidate，3leader
+	timeOutIndex int       //表示当前选举倒计时是第几轮
+	timeOut      chan bool //是否倒计时完成
 }
 
-// return currentTerm and whether this server
-// believes it is the leader.
+// return currentTerm and whether this server believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
-	var term int
 	var isleader bool
-	// Your code here (2A).
-	return term, isleader
+	if rf.state == 3 {
+		isleader = true
+	} else {
+		isleader = false
+	}
+	return rf.currentTerm, isleader
 }
 
 //
@@ -93,66 +114,19 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 }
 
-
-
-
-//
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-//
-type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
+//打印
+func MyLog(raftIndex int, state int, timeOutIndex int, message string) {
+	var role string
+	switch state {
+	case 1:
+		role = "follower"
+	case 2:
+		role = "candidate"
+	case 3:
+		role = "leader"
+	}
+	ZM.Println("Server:", raftIndex, role, ",我的倒计时轮数 ", timeOutIndex, ",Msg: ", message)
 }
-
-//
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
-//
-type RequestVoteReply struct {
-	// Your data here (2A).
-}
-
-//
-// example RequestVote RPC handler.
-//
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here (2A, 2B).
-}
-
-//
-// example code to send a RequestVote RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-//
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
-}
-
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -172,9 +146,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	term := -1
 	isLeader := true
 
-	// Your code here (2B).
-
-
+	switch rf.state {
+	case 1:
+	case 2:
+		isLeader = false
+	case 3:
+		isLeader = true
+		term = rf.currentTerm
+		index = len(rf.logs) + 1
+		rf.logs = append(rf.logs, Log{term, command})
+	}
 	return index, term, isLeader
 }
 
@@ -186,6 +167,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 //
 func (rf *Raft) Kill() {
 	// Your code here, if desired.
+	ZM.Println("Raft instance Kill")
 }
 
 //
@@ -198,19 +180,200 @@ func (rf *Raft) Kill() {
 // tester or service expects Raft to send ApplyMsg messages.
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
-//
+// raft节点创建过程
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{}
-	rf.peers = peers
+	rf.peers = append(rf.peers, peers...)
 	rf.persister = persister
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
 
+	//状态初始化
+	rf.currentTerm = 0
+	rf.votedFor = -1
+	rf.logs = make([]Log, 0)
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
+	rf.timeOutIndex = 0
+	rf.timeOut = make(chan bool)
+	rf.state = 1 //follower
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+	go work(rf)
 
 	return rf
+}
+
+//发起新一轮的倒计时，首先拿到此轮标识
+func newElectionTimeOutIndex(rf *Raft) int {
+	rf.mu.Lock()
+	rf.timeOutIndex++
+	index := rf.timeOutIndex
+	rf.mu.Unlock()
+	return index
+}
+
+//发起选举倒计时
+func startElectionTimeOut(rf *Raft, index int) {
+	MyLog(rf.me, rf.state, index, "开始新一轮倒计时")
+
+	//倒计时随机
+	time.Sleep(time.Millisecond * 100)
+	randNum := rand.Intn(10)
+	for i := 0; i < randNum; i++ {
+		time.Sleep(time.Millisecond * 10)
+	}
+
+	//倒计时结束，比较当前倒计时是否是自己这一轮; 因为leader心跳包会使自己重启倒计时，这次的就不管了
+	rf.mu.Lock()
+	indexNew := rf.timeOutIndex
+	rf.mu.Unlock()
+
+	//有效的倒计时结束
+	if index == indexNew {
+		switch rf.state {
+		case 1:
+			rf.state = 2
+			rf.timeOut <- true //选举倒计时结束
+			MyLog(rf.me, rf.state, index, "结束倒计时，成为候选人")
+		case 2:
+			rf.timeOut <- true //选举倒计时结束
+			MyLog(rf.me, rf.state, index, "结束倒计时，重新发起选举")
+		case 3:
+		}
+
+	} else { //新的倒计时已经开始，此轮无效
+		ZM.Println("server:", rf.me, rf.state, "倒计时第", index, "轮结束，但是无效，新的已经开始了。", indexNew)
+		return
+	}
+}
+
+//结束当前的倒计时
+func endElectionTimeOut(rf *Raft, timeOutIndex int, serverState int) {
+	MyLog(rf.me, rf.state, timeOutIndex, "被结束,成为状态"+strconv.Itoa(serverState))
+
+	rf.mu.Lock()
+	index := rf.timeOutIndex
+	rf.mu.Unlock()
+
+	if index == timeOutIndex {
+		rf.state = serverState
+		rf.timeOut <- true
+	} else {
+		return //新的倒计时已经开始，此轮无效
+	}
+}
+
+//raft节点的循环
+func work(rf *Raft) {
+	for {
+		switch rf.state {
+		case 1:
+			index := newElectionTimeOutIndex(rf)
+			go startElectionTimeOut(rf, index) //启动选举倒计时
+			<-rf.timeOut                       //完成选举倒计时
+		case 2:
+			index := newElectionTimeOutIndex(rf)
+			go startElectionTimeOut(rf, index) //启动选举倒计时
+			go candidateWork(rf, index)        //发起选举
+			<-rf.timeOut                       //完成选举倒计时
+		case 3:
+			//leader不用倒计时，有问题就变follower
+			leaderWork(rf)
+		}
+	}
+}
+
+//候选人发起选举
+func candidateWork(rf *Raft, electionIndex int) {
+	MyLog(rf.me, rf.state, electionIndex, "发起选举")
+	rf.currentTerm++
+	rf.votedFor = rf.me
+	serverNum := len(rf.peers)
+
+	//发送RequestVote RPC
+	lastLogIndex := len(rf.logs)
+	lastLogTerm := 0
+	if lastLogIndex != 0 {
+		lastLogTerm = rf.logs[len(rf.logs)-1].Term
+	}
+	args := RequestVoteArgs{rf.currentTerm, rf.me, lastLogIndex, lastLogTerm}
+	votes := make(chan RequestVoteReply, serverNum-1) //接收到的投票
+	for i := 0; i < serverNum && i != rf.me; i++ {
+		go func(serverID int) {
+			reply := RequestVoteReply{-1, false}
+			ok := rf.sendRequestVote(serverID, &args, &reply)
+			if ok {
+				votes <- reply
+			} else {
+				return
+			}
+		}(i)
+	}
+
+	//统计投票结果
+	voteNum := 1 //自已有一票
+	for vote := range votes {
+		//停止选举
+		if vote.Term > rf.currentTerm {
+			rf.currentTerm = vote.Term
+			rf.state = 1
+			rf.votedFor = -1
+			endElectionTimeOut(rf, electionIndex, 1)
+			break
+		}
+		if vote.VoteGranted {
+			voteNum++
+		}
+		if voteNum > (serverNum-1)/2 {
+			//选举成功
+			endElectionTimeOut(rf, electionIndex, 3)
+			break
+		}
+	}
+}
+
+func leaderWork(rf *Raft) {
+	ZM.Printf("server %d do leader work.\n", rf.me)
+	//leader每次需要重置
+	leaderLastLog := len(rf.logs)
+	for i := 0; i < len(rf.peers); i++ {
+		rf.nextIndex[i] = leaderLastLog + 1
+		rf.matchIndex[i] = 0
+	}
+
+	for rf.state == 3 {
+		ZM.Printf("server %d send AppendEntries\n", rf.me)
+		leaderAppendEntries(rf)
+		time.Sleep(time.Millisecond * 30)
+	}
+}
+
+//定期发送心跳包
+func leaderAppendEntries(rf *Raft) {
+	//心跳包
+	args := AppendEntriesArgs{
+		rf.currentTerm,
+		rf.me,
+		0,
+		0,
+		make([]Log, 0),
+		0,
+	}
+	for i := 0; i < len(rf.peers) && i != rf.me; i++ {
+		go func(serverID int) {
+			reply := AppendEntriesReply{rf.currentTerm, true}
+			ok := rf.sendAppendEntries(serverID, &args, &reply)
+			if ok && reply.Term > rf.currentTerm {
+				rf.currentTerm = reply.Term
+				rf.state = 1
+				rf.votedFor = -1
+			}
+		}(i)
+	}
 }
